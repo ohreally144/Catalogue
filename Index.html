@@ -168,19 +168,31 @@ async function loadCatalogue() {
   }
 
   // 2. Check if the CSV has changed since we last downloaded it
+  // Try a HEAD request first — if CORS blocks it, fall through to a full fetch
+  let serverModified = '';
   try {
     const head = await fetch(CSV_URL, { method: 'HEAD' });
-    const serverModified = head.headers.get('Last-Modified') || head.headers.get('ETag') || '';
+    serverModified = head.headers.get('Last-Modified') || head.headers.get('ETag') || '';
+  } catch(e) {
+    // CORS or network blocked the HEAD — ignore and proceed to full fetch
+  }
 
-    if (serverModified && serverModified === cachedModified && cachedData) {
-      // File unchanged — nothing to do
-      return;
-    }
+  // If we got a Last-Modified and it matches the cache, we're done
+  if (serverModified && serverModified === cachedModified && cachedData) {
+    return;
+  }
 
-    // 3. File is new or changed (or no cache yet) — download the full CSV
+  // 3. Download the full CSV
+  try {
     const resp = await fetch(CSV_URL);
     if (!resp.ok) throw new Error('HTTP ' + resp.status);
     const text = await resp.text();
+
+    // Try to get Last-Modified from the GET response if HEAD didn't give it
+    if (!serverModified) {
+      serverModified = resp.headers.get('Last-Modified') || resp.headers.get('ETag') || '';
+    }
+
     PRODUCTS = parseCSV(text);
 
     // Save to cache
@@ -188,7 +200,6 @@ async function loadCatalogue() {
       localStorage.setItem(CACHE_KEY_DATA, JSON.stringify(PRODUCTS));
       localStorage.setItem(CACHE_KEY_MODIFIED, serverModified);
     } catch(e) {
-      // localStorage might be full — not a fatal error
       console.warn('Could not cache catalogue:', e);
     }
 
